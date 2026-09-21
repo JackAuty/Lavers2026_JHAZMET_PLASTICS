@@ -1,0 +1,2434 @@
+---
+title: "Default Rmarkdown Template"
+author: "Alix de Jersey and Jack Rivers-Auty"
+date: "`r Sys.Date()`"
+output:
+    html_document:
+      toc: true
+      toc_title: "Table of Contents"
+      number_sections: true
+---
+
+```{r CSS install, include=T, results='asis', comment=NA, echo=F}
+x <- tryCatch(readLines("https://raw.githubusercontent.com/JackAuty/RmarkdownStyle/main/styles.css"), error=function(e) ""); if (length(x)) cat("<style>\n", paste(x, collapse="\n"), "\n</style>")
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,       # Show code
+  warning = FALSE,   # Suppress warnings
+  message = FALSE    # Suppress messages
+)
+
+options(scipen =999 )
+```
+
+# Load Required Packages
+
+```{r load-packages, warning=FALSE, message=FALSE, results='hide' }
+# Load packages, install if required
+packages <- c("ggplot2", "viridisLite", "sjPlot", "ggfortify", "readr", "MASS", "DT", "corrplot", "emmeans", "mediation", "car", "lubridate", "PupillometryR", "gghalves")
+invisible(lapply(packages, function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg)
+  library(pkg, character.only = TRUE)
+}))
+```
+# Citations
+```{r}
+
+# Use the existing package list
+pkg <- packages 
+
+# Create a character vector for clean citations
+citation_list <- character()  
+
+# Loop through each package and clean citation
+for (i in pkg) {
+  # Get the plain text citation
+  raw <- paste(capture.output(print(citation(i), style = "text", bibtex = FALSE)), collapse = "\n")
+  
+  # Clean: remove _, *, " and trailing . or ,.
+  clean <- gsub("_", "", raw, fixed = TRUE)
+  clean <- gsub("\\*", "", clean)
+  clean <- gsub('\\"', "", clean)            # Handles escaped quotes
+  clean <- gsub('"', "", clean)              # Handles regular quotes
+  clean <- gsub("\\\\texttt\\{(.*?)\\}", "\\1", clean)
+  clean <- gsub(", \\.$", "", clean)
+  clean <- gsub("\\s*\\.$", "", clean)
+  clean <- gsub("[\u201C\u201D]", "", clean)
+  clean <- trimws(clean)
+
+  # Append to citation list
+  citation_list <- c(citation_list, clean)
+}
+
+# Display as a table
+datatable(
+  data.frame(References = citation_list)
+)
+```
+
+
+# Load data
+```{r}
+setwd("C:/Users/ampde/OneDrive - University of Tasmania/PhD/00 Projects/2025 Blood Chem update/Blood chemistry")
+blood_data <- read_csv("FFSH blood chem - 2014 to 2017 & 2025.csv")
+blood_data$Date <- as.Date(blood_data$Date, format = "%d-%b-%y")
+blood_data$Year <- format(as.Date(blood_data$Date), "%Y")
+
+# Define plastic category
+blood_data$Plastic <- ifelse(blood_data$Plas.mass < 0.1, "Low Plastic", "High Plastic")
+```
+
+# Glucose
+```{r}
+# Conversion factor
+mmol_to_mgdl <- 18.01559
+
+# Create the new glucose column
+blood_data$glucose <- NA  # initialize with NA
+
+# For rows where Glu_I has a value, convert mmol/L to mg/dL
+blood_data$glucose[!is.na(blood_data$Glu_I)] <- blood_data$Glu_I[!is.na(blood_data$Glu_I)] * mmol_to_mgdl
+
+# For rows where Glu_Z has a value, just use it directly (already in mg/dL)
+blood_data$glucose[!is.na(blood_data$Glu_Z)] <- blood_data$Glu_Z[!is.na(blood_data$Glu_Z)]
+```
+
+```{r}
+glucose_plot <- ggplot(blood_data, aes(x = Year, y = glucose, fill = Plastic)) +
+  geom_boxplot(position = position_dodge(0.8)) +
+  scale_fill_manual(values = c("High Plastic" = "#56b4e9", "Low Plastic" = "#009e73")) +
+  theme_classic()
+glucose_plot
+```
+
+# 2025 data
+```{r}
+blood_data_2025 <- subset(blood_data, Year == "2025")
+```
+
+```{r}
+cols_to_test <- c(21, 17, 6:9, 12:16)
+group_factor <- as.factor(blood_data_2025[[25]])
+
+# Subset the numeric columns you want to test
+numeric_data <- blood_data_2025[, cols_to_test]
+
+# Ensure they are numeric (this should be unnecessary unless you're unsure)
+numeric_data <- data.frame(lapply(numeric_data, as.numeric))
+
+
+# Calculate correlation matrix
+cor_matrix <- cor(numeric_data, use = "pairwise.complete.obs")
+
+# Exclude both Plas.mass (col 1) and Mass (adjust column index or name as needed)
+pca_input <- numeric_data[, !(names(numeric_data) %in% c("Plas.mass", "Mass"))]
+
+# Run PCA
+pca_result <- prcomp(pca_input, scale. = TRUE)
+
+# Extract PCA scores
+pca_scores <- as.data.frame(pca_result$x)
+
+# Add Plas.mass and Mass back in
+pca_scores$Plas.mass <- numeric_data$Plas.mass
+pca_scores$Mass <- numeric_data$Mass
+
+ggplot(pca_scores, aes(x = PC1, y = PC2, color = Plas.mass, size = Mass)) +
+  geom_point(alpha = 0.8) +
+  scale_color_viridis_c() +
+  labs(title = "PCA: Colored by Plastic Mass, Sized by Body Mass",
+       x = paste0("PC1 (", round(summary(pca_result)$importance[2,1]*100, 1), "% variance)"),
+       y = paste0("PC2 (", round(summary(pca_result)$importance[2,2]*100, 1), "% variance)"),
+       color = "Plastic Mass",
+       size = "Mass (g)") +
+  theme_classic()
+
+
+# Plot
+corrplot::corrplot(cor_matrix, method = "circle")
+
+custom_labels <- c(
+  "Ingested plastic mass (g)", 
+  "Body mass (g)", 
+  "Sodium", 
+  "Potassium", 
+  "Chloride", 
+  "Carbon dioxide", 
+  "Glucose", 
+  "Calcium", 
+  "Anion Gap", 
+  "Hematocrit",
+  "Hemoglobin"
+)
+hist(blood_data_2025$glucose)
+colnames(cor_matrix) <- custom_labels
+rownames(cor_matrix) <- custom_labels
+
+# Mixed plot: color in lower, scatterplots in upper triangle
+corrplot.mixed(cor_matrix,
+               lower = "circle",     # Lower triangle as color
+               upper = "number",   # Upper triangle as scatterplots
+               tl.col = "black",    # Text label color
+               tl.pos = "lt", # Label position
+               tl.labels = custom_labels, 
+               diag = "n")          # No diagonal
+
+results <- data.frame(
+  Column = character(),
+  Estimate = numeric(),
+  StdError = numeric(),
+  z_value = numeric(),
+  p_value = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (col_num in cols_to_test) {
+  # Prepare data, remove rows with NA in either predictor or response
+  dat <- data.frame(
+    response = blood_data_2025[[col_num]],
+    group = group_factor
+  )
+  dat <- na.omit(dat)
+  
+  if (length(unique(dat$group)) == 2) {
+    # Fit GLM with Gaussian family (normal distribution)
+    fit <- glm(response ~ group, data = dat, family = gaussian())
+     #Diagnostic plots 
+    print(autoplot(fit,which = c(1,2,4)))
+    # Extract summary coefficients for the group effect (usually 2nd row)
+    coef_summary <- summary(fit)$coefficients
+    
+    # Row 2 is group effect if factor has two levels
+    est <- coef_summary[2, "Estimate"]
+    se <- coef_summary[2, "Std. Error"]
+    zval <- coef_summary[2, "t value"]  # For gaussian glm, it's t value
+    pval <- coef_summary[2, "Pr(>|t|)"]
+    
+    results <- rbind(results, data.frame(
+      Column = names(blood_data_2025)[col_num],
+      Estimate = est,
+      StdError = se,
+      z_value = zval,
+      p_value = pval
+    ))
+  }
+}
+
+print(results)
+```
+
+```{r}
+ggplot(blood_data_2025, aes(x = Year, y = glucose, fill = Plastic)) +
+  geom_boxplot(position = position_dodge(0.8)) +
+  scale_fill_manual(values = c("High Plastic" = "#56b4e9", "Low Plastic" = "#009e73")) +
+  theme_classic()
+```
+
+
+
+
+
+
+
+
+
+```{r}
+# Example variables:
+plastics_col <- 21  # replace with your plastics column index or name
+response_col <- 12  # replace with the response variable column you want to model
+colnames(blood_data_2025)
+# Extract data, removing NAs
+df_sub <- blood_data_2025[, c(plastics_col, response_col)]
+names(df_sub) <- c("plastics", "response")
+df_sub <- df_sub[complete.cases(df_sub), ]
+
+# Add a small constant to plastics to avoid log(0)
+df_sub$log_plastics <- log(df_sub$plastics + 1e-6)
+
+# Fit linear regression with log(plastics)
+fit <- lm(response ~ log_plastics, data = df_sub)
+
+# Create prediction data for smooth line
+pred_data <- data.frame(
+  log_plastics = seq(min(df_sub$log_plastics), max(df_sub$log_plastics), length.out = 100)
+)
+pred_data$response_pred <- predict(fit, newdata = pred_data)
+
+# Define threshold on plastics (e.g. plastics = 2)
+threshold_value <- 0.5
+# Add mass group
+df_sub$mass_group <- ifelse(blood_data_2025$Mass < 550, "<550g", "≥550g")
+
+# Plot with color mapped to mass_group
+ggplot(df_sub, aes(x = plastics, y = response, color = mass_group)) +
+  geom_point() +
+  geom_line(data = transform(pred_data, plastics = exp(log_plastics)), 
+            aes(x = plastics, y = response_pred), color = "#0072b2", inherit.aes = FALSE) +
+  geom_vline(xintercept = threshold_value, linetype = "dashed", color = "#999999") +
+  geom_smooth(method =lm)+
+  scale_x_continuous(trans = "log1p") +  # log1p to match log(plastics + 1) transform
+  scale_color_manual(values = c("<550g" = "#E69F00", "≥550g" = "#009E73")) +
+  labs(
+    title = "Regression of Response on Log Plastics",
+    x = "Plastics (log scale)",
+    y = "Response",
+    color = "Mass Group"
+  ) +
+  theme_classic()
+
+```
+
+```{r}
+ggplot(data = blood_data_2025, aes(x = Cl, y = Na, colour = Plastic)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  geom_text(aes(label = ID), vjust = -0.5, size = 3, show.legend = FALSE) +
+  theme_classic()
+
+```
+
+data cleaning: plot the acucheck and the iSTAT as a geom_smooth (method = lm) 1/18 slope. should be tight. Do the autoplot function, it will have a high cooks distance (over 0.4). 
+
+
+We might need to remove the low weight animals or later we can adjust for the low weight <550g.
+To adjust for them, do a linear regression on the dependent variable (e.g., chloride) vs. weight.
+Take the residuals from that and map that against plastic.mass. 
+After we have adjusted for weight, what is leftover to be explained by plastic. 
+The z-score axis can be hard to infer from. 
+Could eventually do biomarker stuff, plot two of the strongest predictors and colour by plastic. 
+
+How to bring in the different years? 
+
+
+```{r}
+colnames(blood_data_2025)
+
+# Example variables:
+plastics_col <- 21  # replace with your plastics column index or name
+response_col <- 12  # replace with the response variable column you want to model
+
+# Extract data, removing NAs
+df_sub <- blood_data_2025[, c(plastics_col, response_col)]
+names(df_sub) <- c("plastics", "response")
+
+# Add a small constant to plastics to avoid log(0)
+df_sub$log_plastics <- log(df_sub$plastics + 1e-6)
+
+# Fit linear regression with log(plastics)
+aov_base <- lm(response ~ log_plastics, data = df_sub)
+autoplot(aov_base,which = c(1,2,4))
+
+# BoxCox transformation 
+boxcox<-boxcox(aov_base,lambda = seq(-5, 5, 1/1000), plotit = F)
+
+Selected.lambda <-boxcox$x[boxcox$y==max(boxcox$y)] 
+Selected.lambda 
+
+# Run the transformed model 
+aov_base_trans <- lm(response^Selected.lambda ~ log_plastics, data = df_sub)
+
+autoplot(aov_base_trans, which = c(1,2,4))
+
+# Summary of the linear model gives you the coefficients 
+tab_model(aov_base_trans) 
+tab_df(anova(aov_base_trans),show.rownames =T) 
+```
+
+```{r}
+# Define plastics column and the response columns
+plastics_col <- 21
+response_cols <- setdiff(6:16, c(10, 11))  # exclude 10 and 11
+
+# Create empty list to store results
+results_list <- list()
+
+# Loop over the response columns
+for (col in response_cols) {
+  
+  response_name <- colnames(blood_data_2025)[col]
+  
+  # Extract and prepare data
+  df_sub <- blood_data_2025[, c(plastics_col, col)]
+  names(df_sub) <- c("plastics", "response")
+  df_sub <- na.omit(df_sub)  # Remove rows with NA
+  
+  # Skip if not enough observations
+  if (nrow(df_sub) < 3) {
+    results_list[[response_name]] <- NA
+    next
+  }
+  
+  # Add small constant to plastics
+  df_sub$log_plastics <- log(df_sub$plastics + 1)
+  
+  # Fit base model
+  aov_base <- lm(response ~ log_plastics, data = df_sub)
+  
+  # Try BoxCox transformation
+  boxcox_out <- boxcox(aov_base, lambda = seq(-5, 5, 1/1000), plotit = FALSE)
+  lambda <- boxcox_out$x[which.max(boxcox_out$y)]
+  
+  # Fit transformed model
+  if (lambda == 0) {
+    response_trans <- log(df_sub$response)
+  } else {
+    response_trans <- df_sub$response^lambda
+  }
+  
+  aov_base_trans <- lm(response_trans ~ log_plastics, data = df_sub)
+  print(tab_model(aov_base_trans))
+  aov_res <- anova(aov_base_trans)
+  print(autoplot(aov_base_trans))
+  # Extract p-value for log_plastics term
+  p_val <- aov_res["log_plastics", "Pr(>F)"]
+  
+  results_list[[response_name]] <- p_val
+}
+
+# Convert to dataframe
+results_df <- data.frame(
+  Response = names(results_list),
+  P_Value = unlist(results_list)
+)
+
+print(results_df)
+
+```
+
+
+```{r}
+plot_raw_scatter_all <- function(data, plastics_col, response_cols, id_col) {
+  response_cols <- setdiff(response_cols, c(10, 11))  # exclude unwanted columns
+  
+  plots <- list()
+  
+  for (col in response_cols) {
+    response_name <- colnames(data)[col]
+    
+    df_sub <- data[, c(id_col, plastics_col, col)]
+    names(df_sub) <- c("ID", "plastics", "response")
+    df_sub <- na.omit(df_sub)
+    
+    if (nrow(df_sub) < 3) next  # skip if too few points
+    
+    df_sub$log_plastics <- (df_sub$plastics + 0)
+    
+    p <- ggplot(df_sub, aes(x = log_plastics, y = response, label = ID)) +
+      geom_point() +
+      geom_smooth(method = "lm", se = FALSE, color = "blue") +
+      geom_text(size = 3, vjust = -0.5, check_overlap = TRUE) +
+      labs(
+        title = response_name,
+        x = "log(Plastics)",
+        y = response_name
+      ) +
+      theme_classic()
+    
+    plots[[response_name]] <- p
+  }
+  
+  return(plots)
+}
+
+all_plots <- plot_raw_scatter_all(blood_data_2025, plastics_col = 21, response_cols = 6:16, id_col = 1)
+
+# Show all individually
+for (plot_name in names(all_plots)) {
+  print(all_plots[[plot_name]])
+}
+
+```
+
+
+```{r}
+blood_chem_glucose <- read.csv("250721 glucose check.csv")
+
+# Prepare the data
+df_glucose <- blood_chem_glucose[, c("ID", "Gl_iSTAT", "Gl_Aqu")]
+df_glucose <- na.omit(df_glucose)
+
+# Plot Gl_iSTAT vs Gl_Aqu
+ggplot(df_glucose, aes(x = Gl_iSTAT, y = Gl_Aqu, label = ID)) +
+  geom_point() +
+  geom_text(size = 3, vjust = -0.5, check_overlap = TRUE) +
+  labs(
+    title = "Comparison of Glucose Measures",
+    x = "Glucose (iSTAT)",
+    y = "Glucose (Aqucheck)"
+  ) +
+  theme_classic()
+```
+
+```{r}
+plot_raw_scatter_all <- function(data, plastics_col, response_cols, id_col, mass_col, mass_threshold = 550) {
+  response_cols <- setdiff(response_cols, c(10, 11))  # exclude unwanted columns
+  plots <- list()
+  
+  for (col in response_cols) {
+    response_name <- colnames(data)[col]
+    
+    df_sub <- data[, c(id_col, plastics_col, col, mass_col)]
+    names(df_sub) <- c("ID", "plastics", "response", "mass")
+    df_sub <- na.omit(df_sub)
+    
+    if (nrow(df_sub) < 3) next  # skip if too few points
+    
+    # Add mass group
+    df_sub$mass_group <- ifelse(df_sub$mass < mass_threshold, "<550g", "≥550g")
+    
+    # Optional: transform plastics if needed (currently raw)
+    df_sub$log_plastics <- (df_sub$plastics + 0)
+    
+    p <- ggplot(df_sub, aes(x = log_plastics, y = response, color = mass_group, label = ID)) +
+      geom_point() +
+      geom_smooth(method = "lm", se = FALSE) +
+      geom_text(size = 3, vjust = -0.5, check_overlap = TRUE) +
+      scale_color_manual(values = c("<550g" = "#E69F00", "≥550g" = "#009E73")) +
+      labs(
+        title = response_name,
+        x = "log(Plastics)",
+        y = response_name,
+        color = "Mass Group"
+      ) +
+      theme_classic()
+    
+    plots[[response_name]] <- p
+  }
+  
+  return(plots)
+}
+
+
+all_plots <- plot_raw_scatter_all(
+  data = blood_data_2025,
+  plastics_col = 21,
+  response_cols = 6:16,
+  id_col = 1,
+  mass_col = 17  # or whatever column holds Mass
+)
+
+# Show each plot individually
+for (plot_name in names(all_plots)) {
+  print(all_plots[[plot_name]])
+}
+
+```
+
+```{r}
+plot_mass_by_response <- function(data, mass_col, response_cols, id_col, plastics_col = NULL, plastic_threshold = 0.5) {
+  response_cols <- setdiff(response_cols, c(10, 11))
+  plots <- list()
+  
+  for (col in response_cols) {
+    response_name <- colnames(data)[col]
+    
+    if (!is.null(plastics_col)) {
+      df_sub <- data[, c(id_col, mass_col, col, plastics_col)]
+      names(df_sub) <- c("ID", "mass", "response", "plastics")
+      df_sub$plastics_group <- ifelse(df_sub$plastics < plastic_threshold, "<0.5", "≥0.5")
+    } else {
+      df_sub <- data[, c(id_col, mass_col, col)]
+      names(df_sub) <- c("ID", "mass", "response")
+    }
+    
+    df_sub <- na.omit(df_sub)
+    if (nrow(df_sub) < 3) next
+    
+    p <- ggplot(df_sub, aes(x = mass, y = response, label = ID)) +
+      geom_point(aes(color = if (!is.null(plastics_col)) plastics_group else NULL), size=3) +
+      geom_smooth(method = "lm", se = FALSE) +
+      geom_text(size = 3, vjust = -0.5, check_overlap = TRUE) +
+      labs(
+        title = paste("Mass vs", response_name),
+        x = "Mass (g)",
+        y = response_name,
+        color = if (!is.null(plastics_col)) "Plastics Group" else NULL
+      ) +
+      theme_classic()
+    
+    if (!is.null(plastics_col)) {
+      p <- p + scale_color_manual(values = c("<0.5" = "#990099", "≥0.5" = "#0072b2"))
+    }
+    
+    plots[[response_name]] <- p
+  }
+  
+  return(plots)
+}
+
+mass_plots <- plot_mass_by_response(
+  data = blood_data_2025,
+  mass_col = 17,
+  response_cols = 6:16,
+  id_col = 1,
+  plastics_col = 21  # optional for coloring
+)
+
+# Show each plot individually
+for (plot_name in names(mass_plots)) {
+  print(mass_plots[[plot_name]])
+}
+
+
+```
+
+```{r}
+# Define relevant columns
+plastics_col <- 21
+mass_col <- 17
+response_cols <- setdiff(6:16, c(10, 11))  # exclude 10 and 11
+
+# Store results
+two_way_results <- data.frame(
+  Response = character(),
+  P_plastics = numeric(),
+  P_mass = numeric(),
+  P_interaction = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Loop over response variables
+for (col in response_cols) {
+  
+  response_name <- colnames(blood_data_2025)[col]
+  
+  # Extract required columns
+  df_sub <- blood_data_2025[, c(plastics_col, mass_col, col)]
+  names(df_sub) <- c("plastics", "mass", "response")
+  df_sub <- na.omit(df_sub)
+  
+  if (nrow(df_sub) < 3) next
+  
+  # Log-transform plastics only
+  df_sub$log_plastics <- log(df_sub$plastics + 1)
+  
+  # Fit initial model for BoxCox on the response
+  base_model <- lm(response ~ log_plastics * mass, data = df_sub)
+  boxcox_out <- boxcox(base_model, lambda = seq(-5, 5, 1/1000), plotit = FALSE)
+  lambda <- boxcox_out$x[which.max(boxcox_out$y)]
+  
+  # Apply BoxCox transformation to the response
+  df_sub$response_trans <- if (lambda == 0) log(df_sub$response) else df_sub$response^lambda
+  
+  # Fit two-way ANOVA on transformed response
+  model <- lm(response_trans ~ log_plastics * mass, data = df_sub)
+  aov_res <- anova(model)
+  
+  # Extract p-values
+  p_plastics <- aov_res["log_plastics", "Pr(>F)"]
+  p_mass <- aov_res["mass", "Pr(>F)"]
+  p_interaction <- aov_res["log_plastics:mass", "Pr(>F)"]
+  
+  # Store results
+  two_way_results <- rbind(
+    two_way_results,
+    data.frame(
+      Response = response_name,
+      P_plastics = p_plastics,
+      P_mass = p_mass,
+      P_interaction = p_interaction
+    )
+  )
+}
+
+# View the final table
+print(two_way_results)
+#suggests there is a starvation and non-starvation effect going on (potenitally). 
+```
+
+
+
+
+
+plot calcium for the 2014 birds with the appropriate adjustments. 
+
+
+For the interaction:
+Create a linear model for the response variable vs bird mass. extract the residuals from that model and plot that against the plastic mass. plas.mass not logged. 
+
+Essentially a z score on one axis (-2, +2) and plas mass on the other. Glucose and K is the only one we should really see anything.  
+
+
+```{r}
+# Define relevant columns
+plastics_col <- 21        # Plastic ingestion (not logged in residual plot)
+mass_col <- 17            # Individual body mass
+response_cols <- setdiff(6:16, c(10, 11))  # Exclude 10 and 11
+
+# Create empty list to store results
+results_list <- list()
+
+# Loop over response variables
+for (col in response_cols) {
+  
+  response_name <- colnames(blood_data_2025)[col]
+  
+  # Extract relevant data
+  df_sub <- blood_data_2025[, c(plastics_col, mass_col, col)]
+  names(df_sub) <- c("plastic_mass", "mass", "response")
+  df_sub <- na.omit(df_sub)
+  
+  # Skip if not enough observations
+  if (nrow(df_sub) < 3) {
+    results_list[[response_name]] <- NA
+    next
+  }
+  
+  # ----------------------------------------
+  # BoxCox model with plastic_mass
+  df_sub$plastics <- (df_sub$plastic_mass)
+  aov_base <- lm(response ~ plastics, data = df_sub)
+  
+  boxcox_out <- boxcox(aov_base, lambda = seq(-5, 5, 1/1000), plotit = FALSE)
+  lambda <- boxcox_out$x[which.max(boxcox_out$y)]
+  
+  # Apply transformation
+  if (lambda == 0) {
+    response_trans <- log(df_sub$response)
+  } else {
+    response_trans <- df_sub$response^lambda
+  }
+  
+  aov_base_trans <- lm(response_trans ~ plastics, data = df_sub)
+  print(tab_model(aov_base_trans))
+  print(autoplot(aov_base_trans))
+  
+  # Extract p-value for plastics
+  aov_res <- anova(aov_base_trans)
+  p_val <- aov_res["plastics", "Pr(>F)"]
+  results_list[[response_name]] <- p_val
+  
+  # ----------------------------------------
+  # Linear model: response ~ mass (body weight)
+  lm_mass <- lm(response ~ mass, data = df_sub)
+  df_sub$residuals_mass <- resid(lm_mass)
+  
+  # Plot residuals vs unlogged plastic mass
+  p <- ggplot(df_sub, aes(x = plastics, y = residuals_mass)) +
+    geom_point() +
+    geom_smooth(method = "lm", se = TRUE, color = "blue") +
+    labs(
+      title = paste("Residuals of", response_name, "vs Plastic Mass"),
+      x = "Plastic Mass (g)",
+      y = "Residuals from response ~ Body Mass"
+    ) +
+    theme_classic()
+  
+  print(p)
+
+
+  p <- ggplot(df_sub, aes(x = plastics, y = response)) +
+    geom_point() +
+    geom_smooth(method = "lm", se = TRUE, color = "#0072b2") +
+    labs(
+      title = paste("Raw data from ", response_name, "vs Plastic Mass"),
+      x = "Plastic Mass (g)",
+      y = "Response"
+    ) +
+    theme_classic()
+  
+  print(p)
+  
+  file_name <- paste0("plot_", gsub(" ", "_", response_name), ".pdf")
+
+  # Save as PDF
+  ggsave(
+    filename = file_name,
+    plot = p,
+    device = "pdf",
+    width = 6,
+    height = 5
+  )
+}
+
+# Convert p-values to dataframe
+results_df <- data.frame(
+  Response = names(results_list),
+  P_Value = unlist(results_list)
+)
+
+print(results_df)
+
+# Adjust p-values
+results_df$P_FDR <- as.numeric(p.adjust(results_df$P_Value, method = "fdr"))
+# Print final results
+print(results_df)
+datatable(results_df) %>%
+  formatRound(columns = c("P_Value", "P_FDR"), digits = 3)
+
+```
+
+```{r}
+# Define relevant columns
+plastics_col <- 21        # Plastic ingestion (unlogged)
+mass_col <- 17            # Body mass
+response_cols <- setdiff(6:16, c(10, 11))  # Response variables
+
+# Loop through each response variable
+for (col in response_cols) {
+  
+  response_name <- colnames(blood_data_2025)[col]
+  
+  # Subset and rename data
+  df_sub <- blood_data_2025[, c(plastics_col, mass_col, col)]
+  names(df_sub) <- c("plastic_mass", "mass", "response")
+  df_sub <- na.omit(df_sub)
+  
+  if (nrow(df_sub) < 3) next
+  
+  # Fit adjusted model: response ~ plastic_mass + mass
+  adjusted_model <- lm(response ~ plastic_mass * mass, data = df_sub)
+  
+  # Print model summary
+  cat("\n--- Adjusted model for:", response_name, "---\n")
+  print(summary(adjusted_model))
+  
+  # Optional plot of partial effect of plastic_mass
+  p <- ggplot(df_sub, aes(x = plastic_mass, y = response)) +
+    geom_point() +
+    geom_smooth(method = "lm", formula = y ~ x, se = TRUE, color = "darkgreen") +
+    labs(
+      title = paste("Adjusted:", response_name, "~ Plastic Mass + Mass"),
+      x = "Plastic Mass (g)",
+      y = response_name
+    ) +
+    theme_classic()
+  
+  print(p)
+}
+
+```
+
+
+```{r}
+# Define relevant columns
+plastics_col <- 21        # Plastic ingestion (unlogged)
+mass_col <- 17            # Body mass
+response_cols <- setdiff(6:16, c(10, 11))# Response variables
+ID <- 1
+
+# Loop through each response variable
+for (col in response_cols) {
+  
+  response_name <- colnames(blood_data_2025)[col]
+  
+  # Subset and rename data
+  df_sub <- blood_data_2025[, c(plastics_col, mass_col, col, ID)]
+  names(df_sub) <- c("plastic_mass", "mass", "response", "ID")
+  df_sub <- na.omit(df_sub)
+  
+  if (nrow(df_sub) < 3) next
+  
+  # Step 1: Fit response ~ mass
+  model_mass <- lm(response ~ mass, data = df_sub)
+  
+  # Step 2: Extract residuals
+  df_sub$resid_mass <- resid(model_mass)
+  
+  # Step 3: Plot residuals vs unlogged plastic mass
+  p <- ggplot(df_sub, aes(x = plastic_mass, y = resid_mass, label = ID)) +
+        geom_point() +
+        geom_text(vjust = -0.5, size = 3) +  # add labels just above points
+        geom_smooth(method = "lm", se = TRUE, color = "blue") +
+        labs(
+          title = paste("Residuals of", response_name, "~ Mass vs Plastic Mass"),
+          x = "Plastic Mass (g)",
+          y = "Residuals from response ~ Mass"
+        ) +
+        theme_classic()
+      
+        
+  print(p)
+}
+
+```
+
+
+```{r}
+# Define relevant columns
+plastics_col <- 21        # Plastic ingestion
+mass_col <- 17            # Body mass
+response_cols <- setdiff(6:16, c(10, 11))  # Response variables
+
+# Create empty list to store results
+results_list <- list()
+
+for (col in response_cols) {
+  
+  response_name <- colnames(blood_data_2025)[col]
+  
+  # Subset and rename relevant data
+  df_sub <- blood_data_2025[, c(plastics_col, mass_col, col)]
+  names(df_sub) <- c("plastic_mass", "mass", "response")
+  df_sub <- na.omit(df_sub)
+  
+  if (nrow(df_sub) < 5) {
+    results_list[[response_name]] <- NA
+    next
+  }
+  
+  # Step 1: Model 1 - response ~ mass
+  model_mass <- lm(response ~ mass, data = df_sub)
+  df_sub$resid_mass <- resid(model_mass)
+
+  # Step 2: Model 2 - residuals ~ plastic_mass
+  model_resid_plastic <- lm(resid_mass ~ plastic_mass, data = df_sub)
+  print(paste("Residuals ~ Plastic Mass for", response_name))
+  print(summary(model_resid_plastic))
+  
+  # Step 3: Adjusted Model - response ~ mass * plastic_mass
+  model_adjusted <- lm(response ~ mass * plastic_mass, data = df_sub)
+  print(paste("Adjusted model for", response_name))
+  print(summary(model_adjusted))
+  
+  # Store p-value of interaction term
+  interaction_p <- anova(model_adjusted)["mass:plastic_mass", "Pr(>F)"]
+  results_list[[response_name]] <- interaction_p
+}
+
+# Compile results
+results_df <- data.frame(
+  Response = names(results_list),
+  Interaction_P = unlist(results_list)
+)
+results_df$P_FDR <- p.adjust(results_df$Interaction_P, method = "fdr")
+print(results_df)
+
+```
+
+```{r}
+par(mfrow=c(1,1))
+# Extract relevant data (assuming cols 1 = Plas.mass, 2 = Mass, 3:11 = response variables)
+numeric_data <- blood_data_2025[, c(21, 17, 6:9, 12:16)]
+numeric_data <- data.frame(lapply(numeric_data, as.numeric))
+
+# Rename for clarity
+colnames(numeric_data)[1:2] <- c("Plas.mass", "Mass")
+
+# Extract Mass vector
+mass_vector <- numeric_data$Mass
+
+# Create residual matrix for columns 3:11 (excluding Plas.mass and Mass)
+residual_matrix <- numeric_data[, 3:11]
+
+# Adjust each column for mass
+for (var_name in colnames(residual_matrix)) {
+  df_temp <- data.frame(y = numeric_data[[var_name]], mass = mass_vector)
+  df_temp <- na.omit(df_temp)
+
+  if (nrow(df_temp) >= 5) {
+    model <- lm(y ~ 1, data = df_temp)
+    residuals_adj <- rep(NA, nrow(numeric_data))
+    residuals_adj[as.numeric(rownames(df_temp))] <- resid(model)
+    residual_matrix[[var_name]] <- residuals_adj
+  } else {
+    residual_matrix[[var_name]] <- NA
+  }
+}
+
+# Step 5: Add Plas.mass and Mass back in (unadjusted)
+residual_matrix$Plas.mass <- log(numeric_data$Plas.mass+1)
+residual_matrix$Mass <- numeric_data$Mass
+
+# Step 6: Reorder columns: Plas.mass, Mass, then adjusted variables
+residual_matrix <- residual_matrix[, c("Plas.mass", "Mass", colnames(residual_matrix)[!colnames(residual_matrix) %in% c("Plas.mass", "Mass")])]
+
+# Step 7: Calculate correlation matrix
+adj_cor_matrix <- cor(residual_matrix, use = "pairwise.complete.obs")
+
+custom_labels <- c(
+  "Ingested plastic mass (g)", 
+  "Body mass (g)", 
+  "Sodium", 
+  "Potassium", 
+  "Chloride", 
+  "Carbon dioxide", 
+  "Glucose", 
+  "Calcium", 
+  "Anion Gap", 
+  "Hematocrit",
+  "Hemoglobin"
+)
+
+colnames(adj_cor_matrix) <- custom_labels
+rownames(adj_cor_matrix) <- custom_labels
+
+# Step 8: Plot
+corrplot.mixed(adj_cor_matrix,
+               lower = "circle",
+               upper = "number",
+               tl.col = "black",
+               tl.pos = "lt",
+               tl.cex = 0.9,
+               tl.labels = custom_labels,
+               diag = "n",
+               title = "Correlation Matrix (Responses Adjusted for Mass)")
+```
+
+
+```{r}
+library(corrplot)
+
+par(mfrow = c(1,1))
+
+# Extract relevant data (assuming cols 21 = Plas.mass, 17 = Mass, 6:9 & 12:16 = blood chemistry)
+numeric_data <- blood_data_2025[, c(21, 17, 6:9, 12:16)]
+numeric_data <- data.frame(lapply(numeric_data, as.numeric))
+
+# Rename for clarity
+colnames(numeric_data)[1:2] <- c("Plas.mass", "Mass")
+
+# Step 1: Log-transform plastic mass if desired
+numeric_data$Plas.mass <- log(numeric_data$Plas.mass + 1)
+
+# Step 2: Calculate correlation matrix (no adjustment)
+cor_matrix <- cor(numeric_data, use = "pairwise.complete.obs")
+
+# Step 3: Custom labels
+custom_labels <- c(
+  "Ingested plastic mass (g)", 
+  "Body mass (g)", 
+  "Sodium", 
+  "Potassium", 
+  "Chloride", 
+  "Carbon dioxide", 
+  "Glucose", 
+  "Calcium", 
+  "Anion Gap", 
+  "Hematocrit",
+  "Hemoglobin"
+)
+
+colnames(cor_matrix) <- custom_labels
+rownames(cor_matrix) <- custom_labels
+
+# Step 4: Plot
+# Plot correlation matrix
+corrplot.mixed(cor_matrix,
+               lower = "circle",
+               upper = "number",
+               tl.col = "black",
+               tl.pos = "lt",
+               tl.cex = 0.9,
+               diag = "n",
+               title = "Correlation Matrix (Raw Data)")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+#############################################################################################
+
+Mediation analysis
+
+Run a mediation analysis on the 2025 data
+```{r}
+cal_2025 <- data.frame(
+  ID = blood_data_2025$ID,
+  calcium = blood_data_2025$Ca_Z, 
+  plastic = blood_data_2025$Plas.mass, 
+  mass = blood_data_2025$Mass
+)
+
+initial_model <- lm(calcium ~ mass + plastic, data = cal_2025)
+autoplot(initial_model)
+boxcox_result <- boxcox(initial_model, lambda = seq(-10, 10, 1/300))
+lambda <- boxcox_result$x[which.max(boxcox_result$y)]
+if(lambda == 0){
+  cal_2025$calcium_trans <- log(cal_2025$calcium)
+} else {
+  cal_2025$calcium_trans <- (cal_2025$calcium^lambda)
+}
+hist(cal_2025$calcium)
+hist(cal_2025$calcium_trans)
+
+cal_model <- lm(calcium_trans ~ mass, data = cal_2025)
+
+autoplot(cal_model)
+cal_2025$residuals <- stdres(cal_model)
+
+cal_2025$mass_centred <- as.numeric(scale(cal_2025$mass, center = TRUE, scale = TRUE))
+cal_2025$plastic_centred <- as.numeric(scale(cal_2025$plastic, center = TRUE, scale = TRUE))
+
+
+fit.direct.model.centred <- lm(calcium_trans ~ mass_centred, data = cal_2025)
+fit.mediator.variable.model.centred <- lm(calcium_trans ~ mass_centred + plastic_centred, data = cal_2025)
+
+par(mfrow=c(2,2)) 
+plot(fit.direct.model)
+plot(fit.mediator.variable.model)
+
+mediator_model <- lm(plastic_centred ~ mass_centred, data = cal_2025)
+
+mediation_result <- mediate(
+  model.m = mediator_model,
+  model.y = fit.mediator.variable.model.centred,
+  treat = "mass_centred",
+  mediator = "plastic_centred",
+  boot = TRUE,
+  sims = 1000
+)
+
+summary(mediation_result)
+``` 
+
+mediation with jack
+
+```{r calcium}
+cal_2025 <- data.frame(
+  ID = blood_data_2025$ID,
+  calcium = blood_data_2025$Ca_Z, 
+  plastic = blood_data_2025$Plas.mass, 
+  mass = blood_data_2025$Mass
+)
+
+cal_2025$plastic_scale<-as.numeric(scale(log(cal_2025$plastic+1)))
+
+cal_2025$mass_scale<-as.numeric(scale(cal_2025$mass^2))
+hist(cal_2025$mass_scale)
+
+
+lm_diag <- lm(calcium ~plastic_scale + mass_scale, data = cal_2025)
+
+boxcox_result <- boxcox(lm_diag, lambda = seq(-10, 10, 1/300))
+lambda <- boxcox_result$x[which.max(boxcox_result$y)]
+if(lambda == 0){
+  cal_2025$calcium_trans <- log(cal_2025$calcium)
+} else {
+  cal_2025$calcium_trans <- (cal_2025$calcium^lambda)
+}
+hist(cal_2025$calcium)
+hist(cal_2025$calcium_trans)
+
+cal_2025$calcium_trans<-scale(cal_2025$calcium_trans)
+
+fit.direct.model.centred<-lm(calcium_trans~plastic_scale, data=cal_2025)
+fit.mediator.variable.model.centred<-lm(calcium_trans~plastic_scale + mass_scale, data=cal_2025)
+
+summary(fit.direct.model.centred)
+summary(fit.mediator.variable.model.centred)
+
+autoplot(fit.direct.model.centred)
+autoplot(fit.mediator.variable.model.centred)
+
+set.seed(333)
+calcium_mediation<-mediate(fit.direct.model.centred, fit.mediator.variable.model.centred, treat="plastic_scale", mediator = "mass_scale", boot=T, sims=1000)
+summary_calcium<- summary(calcium_mediation)
+```
+
+```{r sodium}
+sodium_2025 <- data.frame(
+  ID = blood_data_2025$ID,
+  sodium = blood_data_2025$Na, 
+  plastic = blood_data_2025$Plas.mass, 
+  mass = blood_data_2025$Mass
+)
+
+sodium_2025$plastic_scale<-as.numeric(scale(log(sodium_2025$plastic+1)))
+sodium_2025$mass_scale<-as.numeric(scale(sodium_2025$mass^2))
+hist(sodium_2025$mass_scale)
+
+lm_diag <- lm(sodium ~ plastic_scale + mass_scale, data = sodium_2025)
+
+boxcox_result <- boxcox(lm_diag, lambda = seq(-10, 10, 1/300))
+
+lambda <- boxcox_result$x[which.max(boxcox_result$y)]
+
+if(lambda == 0){
+  sodium_2025$sodium_trans <- log(sodium_2025$sodium)
+} else {
+  sodium_2025$sodium_trans <- (sodium_2025$sodium^lambda)
+}
+
+hist(sodium_2025$sodium)
+hist(sodium_2025$sodium_trans)
+
+sodium_2025$sodium_trans<-scale(sodium_2025$sodium_trans)
+
+fit.direct.model.centred<-lm(mass_scale~plastic_scale, data = sodium_2025)
+fit.mediator.variable.model.centred<-lm(sodium_trans~plastic_scale + mass_scale, data = sodium_2025)
+
+summary(fit.direct.model.centred)
+summary(fit.mediator.variable.model.centred)
+
+autoplot(fit.direct.model.centred)
+autoplot(fit.mediator.variable.model.centred)
+
+set.seed(333)
+sodium_mediation<-mediate(fit.direct.model.centred, fit.mediator.variable.model.centred, treat="plastic_scale", mediator = "mass_scale", boot=T, sims=1000)
+summary(sodium_mediation)
+```
+
+```{r potassium}
+potassium_2025 <- data.frame(
+  ID = blood_data_2025$ID,
+  potassium = blood_data_2025$K, 
+  plastic = blood_data_2025$Plas.mass, 
+  mass = blood_data_2025$Mass
+)
+
+potassium_2025$plastic_scale<-as.numeric(scale(log(potassium_2025$plastic+1)))
+potassium_2025$mass_scale<-as.numeric(scale(potassium_2025$mass^2))
+hist(potassium_2025$mass_scale)
+
+
+lm_diag <- lm(potassium ~ plastic_scale + mass_scale, data = potassium_2025)
+
+boxcox_result <- boxcox(lm_diag, lambda = seq(-10, 10, 1/300))
+
+lambda <- boxcox_result$x[which.max(boxcox_result$y)]
+
+if(lambda == 0){
+  potassium_2025$potassium_trans <- log(potassium_2025$potassium)
+} else {
+  potassium_2025$potassium_trans <- (potassium_2025$potassium^lambda)
+}
+
+hist(potassium_2025$potassium)
+hist(potassium_2025$potassium_trans)
+
+potassium_2025$potassium_trans<-scale(potassium_2025$potassium_trans)
+
+fit.direct.model.centred<-lm(mass_scale~plastic_scale, data = potassium_2025)
+fit.mediator.variable.model.centred<-lm(potassium_trans~plastic_scale + mass_scale, data = potassium_2025)
+
+summary(fit.direct.model.centred)
+summary(fit.mediator.variable.model.centred)
+
+autoplot(fit.direct.model.centred)
+autoplot(fit.mediator.variable.model.centred)
+
+set.seed(333)
+potassium_mediation<-mediate(fit.direct.model.centred, fit.mediator.variable.model.centred, treat="plastic_scale", mediator = "mass_scale", boot=T, sims=1000)
+summary(potassium_mediation)
+```
+
+```{r choride}
+chloride_2025 <- data.frame(
+  ID = blood_data_2025$ID,
+  chloride = blood_data_2025$Cl, 
+  plastic = blood_data_2025$Plas.mass, 
+  mass = blood_data_2025$Mass
+)
+
+chloride_2025$plastic_scale<-as.numeric(scale(log(chloride_2025$plastic+1)))
+chloride_2025$mass_scale<-as.numeric(scale(chloride_2025$mass^2))
+hist(chloride_2025$mass_scale)
+
+lm_diag <- lm(chloride ~ plastic_scale + mass_scale, data = chloride_2025)
+
+boxcox_result <- boxcox(lm_diag, lambda = seq(-10, 10, 1/300))
+
+lambda <- boxcox_result$x[which.max(boxcox_result$y)]
+
+if(lambda == 0){
+  chloride_2025$chloride_trans <- log(chloride_2025$chloride)
+} else {
+  chloride_2025$chloride_trans <- (chloride_2025$chloride^lambda)
+}
+
+hist(chloride_2025$chloride, breaks=12)
+hist(chloride_2025$chloride_trans, breaks=12)
+chloride_2025$chloride_trans<-scale(chloride_2025$chloride_trans)
+
+fit.direct.model.centred<-lm(mass_scale~plastic_scale, data = chloride_2025)
+fit.mediator.variable.model.centred<-lm(chloride_trans~plastic_scale + mass_scale, data = chloride_2025)
+
+summary(fit.direct.model.centred)
+summary(fit.mediator.variable.model.centred)
+
+autoplot(fit.direct.model.centred)
+autoplot(fit.mediator.variable.model.centred)
+
+set.seed(333)
+chloride_mediation<-mediate(fit.direct.model.centred, fit.mediator.variable.model.centred, treat="plastic_scale", mediator = "mass_scale", boot=T, sims=1000)
+summary(chloride_mediation)
+```
+
+```{r CO2}
+co2_2025 <- data.frame(
+  ID = blood_data_2025$ID,
+  co2 = blood_data_2025$CO2, 
+  plastic = blood_data_2025$Plas.mass, 
+  mass = blood_data_2025$Mass
+)
+
+co2_2025$plastic_scale<-as.numeric(scale(log(co2_2025$plastic+1)))
+co2_2025$mass_scale<-as.numeric(scale(co2_2025$mass^2))
+hist(co2_2025$mass_scale)
+
+lm_diag <- lm(co2 ~ plastic_scale + mass_scale, data = co2_2025)
+
+boxcox_result <- boxcox(lm_diag, lambda = seq(-10, 10, 1/300))
+
+lambda <- boxcox_result$x[which.max(boxcox_result$y)]
+
+if(lambda == 0){
+  co2_2025$co2_trans <- log(co2_2025$co2)
+} else {
+  co2_2025$co2_trans <- (co2_2025$co2^lambda)
+}
+
+hist(co2_2025$co2)
+hist(co2_2025$co2_trans)
+
+co2_2025$co2_trans<-scale(co2_2025$co2_trans)
+
+fit.direct.model.centred<-lm(mass_scale~plastic_scale, data = co2_2025)
+fit.mediator.variable.model.centred<-lm(co2_trans~plastic_scale + mass_scale, data = co2_2025)
+
+summary(fit.direct.model.centred)
+summary(fit.mediator.variable.model.centred)
+
+autoplot(fit.direct.model.centred)
+autoplot(fit.mediator.variable.model.centred)
+
+set.seed(333)
+co2_mediation<-mediate(fit.direct.model.centred, fit.mediator.variable.model.centred, treat="plastic_scale", mediator = "mass_scale", boot=T, sims=1000)
+summary(co2_mediation)
+```
+
+```{r glucose}
+glucose_2025 <- data.frame(
+  ID = blood_data_2025$ID,
+  glucose = blood_data_2025$Glu_Z, 
+  plastic = blood_data_2025$Plas.mass, 
+  mass = blood_data_2025$Mass
+)
+
+glucose_2025$plastic_scale<-as.numeric(scale(log(glucose_2025$plastic+1)))
+glucose_2025$mass_scale<-as.numeric(scale(glucose_2025$mass^2))
+hist(glucose_2025$mass_scale)
+
+lm_diag <- lm(glucose ~ plastic_scale + mass_scale, data = glucose_2025)
+
+boxcox_result <- boxcox(lm_diag, lambda = seq(-10, 10, 1/300))
+
+lambda <- boxcox_result$x[which.max(boxcox_result$y)]
+
+if(lambda == 0){
+  glucose_2025$glucose_trans <- log(glucose_2025$glucose)
+} else {
+  glucose_2025$glucose_trans <- (glucose_2025$glucose^lambda)
+}
+
+hist(glucose_2025$glucose)
+hist(glucose_2025$glucose_trans)
+
+glucose_2025$glucose_trans<-scale(glucose_2025$glucose_trans)
+
+fit.direct.model.centred<-lm(mass_scale~plastic_scale, data = glucose_2025)
+fit.mediator.variable.model.centred<-lm(glucose_trans~plastic_scale + mass_scale, data = glucose_2025)
+
+summary(fit.direct.model.centred)
+summary(fit.mediator.variable.model.centred)
+
+autoplot(fit.direct.model.centred)
+autoplot(fit.mediator.variable.model.centred)
+
+set.seed(333)
+glucose_mediation<-mediate(fit.direct.model.centred, fit.mediator.variable.model.centred, treat="plastic_scale", mediator = "mass_scale", boot=T, sims=1000)
+summary(glucose_mediation)
+```
+
+```{r Anion Gap}
+an_2025 <- data.frame(
+  ID = blood_data_2025$ID,
+  an = blood_data_2025$An, 
+  plastic = blood_data_2025$Plas.mass, 
+  mass = blood_data_2025$Mass
+)
+
+an_2025$plastic_scale<-as.numeric(scale(log(an_2025$plastic+1)))
+an_2025$mass_scale<-as.numeric(scale(an_2025$mass^2))
+hist(an_2025$mass_scale)
+
+lm_diag <- lm(an ~ plastic_scale + mass_scale, data = an_2025)
+
+boxcox_result <- boxcox(lm_diag, lambda = seq(-10, 10, 1/300))
+
+lambda <- boxcox_result$x[which.max(boxcox_result$y)]
+
+if(lambda == 0){
+  an_2025$an_trans <- log(an_2025$an)
+} else {
+  an_2025$an_trans <- (an_2025$an^lambda)
+}
+
+hist(an_2025$an)
+hist(an_2025$an_trans)
+
+an_2025$an_trans<-scale(an_2025$an_trans)
+
+fit.direct.model.centred<-lm(mass_scale~plastic_scale, data = an_2025)
+fit.mediator.variable.model.centred<-lm(an_trans~plastic_scale + mass_scale, data = an_2025)
+
+summary(fit.direct.model.centred)
+summary(fit.mediator.variable.model.centred)
+
+autoplot(fit.direct.model.centred)
+autoplot(fit.mediator.variable.model.centred)
+
+set.seed(333)
+an_mediation<-mediate(fit.direct.model.centred, fit.mediator.variable.model.centred, treat="plastic_scale", mediator = "mass_scale", boot=T, sims=1000)
+summary(an_mediation)
+```
+
+```{r hemoglobin}
+hemoglobin_2025 <- data.frame(
+  ID = blood_data_2025$ID,
+  hemoglobin = blood_data_2025$Hb, 
+  plastic = blood_data_2025$Plas.mass, 
+  mass = blood_data_2025$Mass
+)
+
+hemoglobin_2025$plastic_scale<-as.numeric(scale(log(hemoglobin_2025$plastic+1)))
+hemoglobin_2025$mass_scale<-as.numeric(scale(hemoglobin_2025$mass^2))
+hist(hemoglobin_2025$mass_scale)
+
+lm_diag <- lm(hemoglobin ~ plastic_scale + mass_scale, data = hemoglobin_2025)
+
+boxcox_result <- boxcox(lm_diag, lambda = seq(-10, 10, 1/300))
+
+lambda <- boxcox_result$x[which.max(boxcox_result$y)]
+
+if(lambda == 0){
+  hemoglobin_2025$hemoglobin_trans <- log(hemoglobin_2025$hemoglobin)
+} else {
+  hemoglobin_2025$hemoglobin_trans <- (hemoglobin_2025$hemoglobin^lambda)
+}
+
+hist(hemoglobin_2025$hemoglobin)
+hist(hemoglobin_2025$hemoglobin_trans)
+
+hemoglobin_2025$hemoglobin_trans<-scale(hemoglobin_2025$hemoglobin_trans)
+
+fit.direct.model.centred<-lm(mass_scale~plastic_scale, data = hemoglobin_2025)
+fit.mediator.variable.model.centred<-lm(hemoglobin_trans~plastic_scale + mass_scale, data = hemoglobin_2025)
+
+summary(fit.direct.model.centred)
+summary(fit.mediator.variable.model.centred)
+
+autoplot(fit.direct.model.centred)
+autoplot(fit.mediator.variable.model.centred)
+
+set.seed(333)
+hemoglobin_mediation<-mediate(fit.direct.model.centred, fit.mediator.variable.model.centred, treat="plastic_scale", mediator = "mass_scale", boot=T, sims=1000)
+summary(hemoglobin_mediation)
+```
+
+```{r hematocrit}
+hematocrit_2025 <- data.frame(
+  ID = blood_data_2025$ID,
+  hematocrit = blood_data_2025$Glu_Z, 
+  plastic = blood_data_2025$Plas.mass, 
+  mass = blood_data_2025$Mass
+)
+
+hematocrit_2025$plastic_scale<-as.numeric(scale(log(hematocrit_2025$plastic+1)))
+hematocrit_2025$mass_scale<-as.numeric(scale(hematocrit_2025$mass^2))
+hist(hematocrit_2025$mass_scale)
+
+lm_diag <- lm(hematocrit ~ plastic_scale + mass_scale, data = hematocrit_2025)
+
+boxcox_result <- boxcox(lm_diag, lambda = seq(-10, 10, 1/300))
+
+lambda <- boxcox_result$x[which.max(boxcox_result$y)]
+
+if(lambda == 0){
+  hematocrit_2025$hematocrit_trans <- log(hematocrit_2025$hematocrit)
+} else {
+  hematocrit_2025$hematocrit_trans <- (hematocrit_2025$hematocrit^lambda)
+}
+
+hist(hematocrit_2025$hematocrit)
+hist(hematocrit_2025$hematocrit_trans)
+
+hematocrit_2025$hematocrit_trans<-scale(hematocrit_2025$hematocrit_trans)
+
+fit.direct.model.centred<-lm(mass_scale~plastic_scale, data = hematocrit_2025)
+fit.mediator.variable.model.centred<-lm(hematocrit_trans~plastic_scale + mass_scale, data = hematocrit_2025)
+
+summary(fit.direct.model.centred)
+summary(fit.mediator.variable.model.centred)
+
+autoplot(fit.direct.model.centred)
+autoplot(fit.mediator.variable.model.centred)
+
+set.seed(333)
+hematocrit_mediation<-mediate(fit.direct.model.centred, fit.mediator.variable.model.centred, treat="plastic_scale", mediator = "mass_scale", boot=T, sims=1000)
+summary(hematocrit_mediation)
+```
+
+Visualisation and table of 2025 mediation analyses
+```{r}
+# Vector of mediator names (prefixes)
+mediators <- c("calcium", "chloride", "co2", "glucose", "hematocrit", "hemoglobin", "an", "sodium")
+
+# Initialize list to store data frames
+all_meds <- list()
+
+# Loop over each mediator
+for (med in mediators) {
+  
+  # Dynamically get the mediation object
+  mediation_obj <- get(paste0(med, "_mediation"))
+  
+  # Get summary
+  summary_med <- summary(mediation_obj)
+  
+  # Build and format data frame
+  df_med <- data.frame(
+    Mediator = med,
+    Effect = c("ACME (indirect effect)",
+               "ADE (direct effect)",
+               "Total Effect",
+               "Proportion Mediated"),
+    Estimate = round(c(summary_med$d0, summary_med$z0, summary_med$tau.coef, summary_med$n0), 2),
+    CI = paste0("[",
+                round(c(summary_med$d0.ci[1], summary_med$z0.ci[1], summary_med$tau.ci[1], summary_med$n0.ci[1]), 3),
+                ", ",
+                round(c(summary_med$d0.ci[2], summary_med$z0.ci[2], summary_med$tau.ci[2], summary_med$n0.ci[2]), 3),
+                "]"),
+    p_value = c(summary_med$d0.p, summary_med$z0.p, summary_med$tau.p, summary_med$n0.p)
+  )
+  
+  # Format p-values
+  df_med$p_value <- ifelse(df_med$p_value < 0.0001,
+                           "<0.0001",
+                           sprintf("%.4f", df_med$p_value))
+  
+  # Append to list
+  all_meds[[med]] <- df_med
+}
+
+# Combine all into one data frame
+combined_df <- do.call(rbind, all_meds)
+
+# Display interactive table
+datatable(combined_df,
+          caption = htmltools::tags$caption(
+            style = 'caption-side: top; text-align: left; font-weight: bold;',
+            "Combined Mediation Analysis Results"
+          ),
+          rownames = FALSE,
+          options = list(pageLength = 20))
+
+# Export to CSV
+# write.csv(combined_df, file = "combined_mediation_results.csv", row.names = FALSE)
+
+```
+
+```{r}
+p_stars <- function(p) ifelse(p < 0.001, "***",
+                       ifelse(p < 0.01, "**",
+                       ifelse(p < 0.05, "*", "")))
+
+plot_mediation_triangle <- function(
+  med_fit, out_fit,
+  treat, mediator,
+  x_label = treat, m_label = mediator, y_label = "Outcome",
+
+  # colours & style
+  box_fills = c(X = "#E6F0FA", M = "#FDE6E6", Y = "#F1E6FA"),
+  edge_col  = "#222222",
+  text_col  = "#222222",
+  line_width = 1,
+  arrow_head_size = 0.25,    # size of arrowhead only
+  line_inset = 1.8,          # pull back arrow line from box centre
+
+  # nudges
+  a_nudge = c(-1.6, 0.8),
+  b_nudge = c( 1.8, 0.8),
+  c_nudge = c( 0.0,-0.7),
+
+  digits_b = 3, digits_t = 2
+) {
+  sm_m <- summary(med_fit)$coefficients
+  sm_y <- summary(out_fit)$coefficients
+
+  a_est <- sm_m[treat, "Estimate"]; a_t <- sm_m[treat, "t value"]; a_df <- df.residual(med_fit); a_p <- 2*pt(-abs(a_t), a_df)
+  b_est <- sm_y[mediator, "Estimate"]; b_t <- sm_y[mediator, "t value"]; b_df <- df.residual(out_fit); b_p <- 2*pt(-abs(b_t), b_df)
+  c_est <- sm_y[treat,  "Estimate"]; c_t <- sm_y[treat,  "t value"]; c_df <- df.residual(out_fit); c_p <- 2*pt(-abs(c_t), c_df)
+
+  a_lab <- sprintf("(a)\nb = %.*f, t(%d) = %.*f%s", 
+                   digits_b, a_est, a_df, digits_t, a_t, p_stars(a_p))
+  b_lab <- sprintf("(b)\nb = %.*f, t(%d) = %.*f%s", 
+                   digits_b, b_est, b_df, digits_t, b_t, p_stars(b_p))
+  c_lab <- sprintf("(c')\nb = %.*f, t(%d) = %.*f%s", 
+                   digits_b, c_est, c_df, digits_t, c_t, p_stars(c_p))
+
+  nodes <- data.frame(
+    name = c(x_label, m_label, y_label),
+    id   = c("X","M","Y"),
+    x    = c(0, 5, 10),
+    y    = c(0, 4, 0)
+  )
+
+  # shorten segments more so arrowheads are clear of boxes
+  a_x  <- c(nodes$x[1] + line_inset*0.35, nodes$x[2] - line_inset*0.35)
+  a_y  <- c(nodes$y[1] + line_inset*0.28, nodes$y[2] - line_inset*0.28)
+  b_x  <- c(nodes$x[2] + line_inset*0.35, nodes$x[3] - line_inset*0.35)
+  b_y  <- c(nodes$y[2] - line_inset*0.28, nodes$y[3] + line_inset*0.28)
+  c_x  <- c(nodes$x[1] + line_inset, nodes$x[3] - line_inset)
+  c_y  <- c(0, 0)
+
+  # label midpoints + nudges
+  mid_a <- c(mean(a_x) + a_nudge[1], mean(a_y) + a_nudge[2])
+  mid_b <- c(mean(b_x) + b_nudge[1], mean(b_y) + b_nudge[2])
+  mid_c <- c(mean(c_x) + c_nudge[1], mean(c_y) + c_nudge[2])
+
+  arrow_style <- arrow(type = "closed", 
+                       length = unit(arrow_head_size, "cm"))
+
+  ggplot() +
+    # a path
+    geom_segment(aes(x = a_x[1], y = a_y[1], 
+                     xend = a_x[2], yend = a_y[2]),
+                 arrow = arrow_style, 
+                 linewidth = line_width, colour = edge_col) +
+    annotate("text", x = mid_a[1], y = mid_a[2], label = a_lab,
+             size = 3.8, hjust = 0.5, colour = text_col) +
+
+    # b path
+    geom_segment(aes(x = b_x[1], y = b_y[1], 
+                     xend = b_x[2], yend = b_y[2]),
+                 arrow = arrow_style, 
+                 linewidth = line_width, colour = edge_col) +
+    annotate("text", x = mid_b[1], y = mid_b[2], label = b_lab,
+             size = 3.8, hjust = 0.5, colour = text_col) +
+
+    # c′ path
+    geom_segment(aes(x = c_x[1], y = c_y[1], 
+                     xend = c_x[2], yend = c_y[2]),
+                 arrow = arrow_style, 
+                 linewidth = line_width, colour = edge_col) +
+    annotate("text", x = mid_c[1], y = mid_c[2], label = c_lab,
+             size = 3.8, hjust = 0.5, colour = text_col) +
+
+    # nodes
+    geom_label(
+      data = nodes,
+      aes(x = x, y = y, label = name, fill = id),
+      size = 5,
+      colour = "black",
+      label.size = 0.6,
+      label.r = unit(0.55, "lines"),           # corner roundness
+      label.padding = unit(0.5, "lines")       # inner text padding
+    ) +
+    scale_fill_manual(values = setNames(box_fills, c("X","M","Y")), guide = "none") +
+    coord_fixed() + theme_void() +
+    xlim(-1, 11) + ylim(-1.6, 5.4)
+}
+```
+
+```{r}
+plot_mediation_triangle(
+  med_fit = fit.direct.model.centred,
+  out_fit = fit.mediator.variable.model.centred,
+  treat   = "plastic_scale",
+  mediator= "mass_scale",
+  x_label = "plastic",
+  m_label = "mass",
+  y_label = "bloodchem"
+)
+```
+
+
+
+###############################################################################################
+
+
+blood chem data 2014
+
+```{r}
+# Convert to Date class if not already
+blood_data$Date <- as.Date(blood_data$Date)
+blood_data$Year <- year(blood_data$Date)
+
+# Build cleaned dataframe
+blood_data_2014 <- data.frame(
+  ID = blood_data$ID,
+  Calcium = blood_data$Ca_I,
+  Glucose = blood_data$Glu_I,
+  Creatine = blood_data$Cr_I,
+  Plastic = blood_data$Plas.mass,
+  Mass = blood_data$Mass, 
+  Year = blood_data$Year
+)
+
+blood_data_2014 <- na.omit(blood_data_2014)
+
+plastics_col <- 5
+mass_col <- 6
+year_col <- 7
+response_cols <- 2:4
+
+# Create empty list to store results
+results_list <- list()
+
+for (col in response_cols) {
+  
+  response_name <- colnames(blood_data_2014)[col]
+  
+  # Subset data
+  df_sub <- blood_data_2014[, c(plastics_col, mass_col, year_col, col)]
+  names(df_sub) <- c("plastic_mass", "mass", "year", "response")
+  
+  # Step 1: Fit model for Box-Cox
+  lm_prebox <- lm(response ~ mass + factor(year), data = df_sub)
+  
+  # Step 2: Box-Cox transformation to determine best lambda
+  bc <- boxcox(lm_prebox, lambda = seq(-10, 10, 1/300), plotit = FALSE)
+
+  lambda <- bc$x[which.max(bc$y)]
+  
+  # Step 3: Apply Box-Cox transformation to response
+  if (lambda == 0) {
+    df_sub$response_bc <- log(df_sub$response)
+  } else {
+    df_sub$response_bc <- (df_sub$response^lambda) / lambda
+  }
+  
+  hist(df_sub$response)
+  hist(df_sub$response_bc)
+  
+  # Step 4: Adjust for mass and year with transformed response
+  model_adjust <- lm(response_bc ~ mass + factor(year), data = df_sub)
+  df_sub$resid_adjusted <- resid(model_adjust)
+  
+  # Step 5: Plot residuals vs plastic mass
+  p <- ggplot(df_sub, aes(x = plastic_mass, y = resid_adjusted)) +
+    geom_point() +
+    geom_smooth(method = "lm", se = TRUE, color = "blue") +
+    labs(
+      title = paste("Residuals of", response_name, "(Box-Cox λ =", round(lambda, 2), ") vs Plastic Mass"),
+      x = "Plastic Mass (g)",
+      y = "Adjusted Residuals"
+    ) +
+    theme_classic()
+    
+  print(p)
+  
+  # Step 6: Model plastic effect on residuals
+  model_plastic <- lm(resid_adjusted ~ plastic_mass, data = df_sub)
+  print(paste("Plastic effect on", response_name, "after Box-Cox + adjustment for mass and year"))
+  print(summary(model_plastic))
+  
+  # Store p-value
+  results_list[[response_name]] <- summary(model_plastic)$coefficients["plastic_mass", "Pr(>|t|)"]
+}
+
+# Compile and adjust p-values
+results_df <- data.frame(
+  Response = names(results_list),
+  P_value = unlist(results_list)
+)
+results_df$P_FDR <- p.adjust(results_df$P_value, method = "fdr")
+
+print(results_df)
+```
+
+```{r calcium 2014 mediation analysis}
+cal_2014 <- data.frame(
+  ID = blood_data$ID,
+  calcium = blood_data$Ca_I, 
+  plastic = blood_data$Plas.mass, 
+  mass = blood_data$Mass
+)
+
+cal_2014 <- na.omit(cal_2014)
+
+cal_2014$plastic_scale<-as.numeric(scale(log(cal_2014$plastic+1)))
+
+cal_2014$mass_scale<-as.numeric(scale(cal_2014$mass^2))
+hist(cal_2014$mass_scale)
+hist(cal_2014$plastic_scale)
+
+lm_diag <- lm(calcium ~plastic_scale + mass_scale, data = cal_2014)
+
+boxcox_result <- boxcox(lm_diag, lambda = seq(-10, 10, 1/300))
+lambda <- boxcox_result$x[which.max(boxcox_result$y)]
+if(lambda == 0){
+  cal_2014$calcium_trans <- log(cal_2014$calcium)
+} else {
+  cal_2014$calcium_trans <- (cal_2014$calcium^lambda)
+}
+hist(cal_2014$calcium)
+hist(cal_2014$calcium_trans)
+
+fit.direct.model.centred<-lm(mass_scale~plastic_scale, data = cal_2014)
+fit.mediator.variable.model.centred<-lm(calcium_trans~plastic_scale + mass_scale, data = cal_2014)
+
+summary(fit.direct.model.centred)
+summary(fit.mediator.variable.model.centred)
+
+autoplot(fit.direct.model.centred)
+autoplot(fit.mediator.variable.model.centred)
+
+set.seed(333)
+calcium_mediation_2014<-mediate(fit.direct.model.centred, fit.mediator.variable.model.centred, treat="plastic_scale", mediator = "mass_scale", boot=T, sims=1000)
+summary(calcium_mediation_2014)
+```
+
+```{r glucose 2014 mediation analysis}
+glucose_2014 <- data.frame(
+  ID = blood_data$ID,
+  glucose = blood_data$Glu_I, 
+  plastic = blood_data$Plas.mass, 
+  mass = blood_data$Mass, 
+  year = blood_data$Year
+)
+
+glucose_2014 <- na.omit(glucose_2014)
+
+glucose_2014$plastic_scale<-as.numeric(scale(log(glucose_2014$plastic+1)))
+
+glucose_2014$mass_scale<-as.numeric(scale(glucose_2014$mass^2))
+hist(glucose_2014$mass_scale)
+hist(glucose_2014$plastic_scale)
+
+lm_diag <- lm(glucose ~plastic_scale + mass_scale, data = glucose_2014)
+
+boxcox_result <- boxcox(lm_diag, lambda = seq(-10, 10, 1/300))
+lambda <- boxcox_result$x[which.max(boxcox_result$y)]
+if(lambda == 0){
+  glucose_2014$glucose_trans <- log(glucose_2014$glucose)
+} else {
+  glucose_2014$glucose_trans <- (glucose_2014$glucose^lambda)
+}
+hist(glucose_2014$glucose)
+hist(glucose_2014$glucose_trans)
+
+fit.direct.model.centred<-lm(mass_scale~plastic_scale, data = glucose_2014)
+fit.mediator.variable.model.centred<-lm(glucose_trans~plastic_scale + mass_scale, data = glucose_2014)
+
+summary(fit.direct.model.centred)
+summary(fit.mediator.variable.model.centred)
+
+autoplot(fit.direct.model.centred)
+autoplot(fit.mediator.variable.model.centred)
+
+set.seed(333)
+glucose_mediation_2014<-mediate(fit.direct.model.centred, fit.mediator.variable.model.centred, treat="plastic_scale", mediator = "mass_scale", boot=T, sims=1000)
+summary(glucose_mediation_2014)
+```
+
+```{r creatine 2014 mediation analysis}
+creatine_2014 <- data.frame(
+  ID = blood_data$ID,
+  creatine = blood_data$Cr_I, 
+  plastic = blood_data$Plas.mass, 
+  mass = blood_data$Mass
+)
+
+creatine_2014 <- na.omit(creatine_2014)
+
+creatine_2014$plastic_scale<-as.numeric(scale(log(creatine_2014$plastic+1)))
+
+creatine_2014$mass_scale<-as.numeric(scale(creatine_2014$mass^2))
+hist(creatine_2014$mass_scale)
+hist(creatine_2014$plastic_scale)
+
+lm_diag <- lm(creatine ~plastic_scale + mass_scale, data = creatine_2014)
+
+boxcox_result <- boxcox(lm_diag, lambda = seq(-10, 10, 1/300))
+lambda <- boxcox_result$x[which.max(boxcox_result$y)]
+if(lambda == 0){
+  creatine_2014$creatine_trans <- log(creatine_2014$creatine)
+} else {
+  creatine_2014$creatine_trans <- (creatine_2014$creatine^lambda)
+}
+hist(creatine_2014$creatine)
+hist(creatine_2014$creatine_trans)
+
+fit.direct.model.centred<-lm(mass_scale~plastic_scale, data = creatine_2014)
+fit.mediator.variable.model.centred<-lm(creatine_trans~plastic_scale + mass_scale, data = creatine_2014)
+
+summary(fit.direct.model.centred)
+summary(fit.mediator.variable.model.centred)
+
+autoplot(fit.direct.model.centred)
+autoplot(fit.mediator.variable.model.centred)
+
+set.seed(333)
+creatine_mediation_2014<-mediate(fit.direct.model.centred, fit.mediator.variable.model.centred, treat="plastic_scale", mediator = "mass_scale", boot=T, sims=1000)
+summary(creatine_mediation_2014)
+```
+
+
+
+
+Figures 
+
+```{r}
+raincloud_glucose <- ggplot(glucose_allyears, aes(x = year, y = glucose, fill = group, color = group)) +
+  geom_half_violin(side = "l", alpha = 0.8, width = 0.6) +
+  geom_point(position = position_jitter(width = 0.1), size = 2, alpha = 0.8) +
+  geom_boxplot(width = 0.1, outlier.shape = NA, alpha = 1, color = "black", position = position_nudge(x = 0.15)) +
+  theme_classic() +
+  labs(
+    title = "Glucose by Year",
+    x = "Year",
+    y = "Glucose"
+  ) +
+  theme(
+    text = element_text(size = 14),
+    legend.position = "none"
+  )
+raincloud_glucose
+
+```
+
+```{r}
+# Ensure factors are in correct order
+glucose_allyears$group <- factor(glucose_allyears$group, levels = c("Low Plastic", "High Plastic"))
+
+# Make composite x-axis
+glucose_allyears$year_group <- interaction(glucose_allyears$year, glucose_allyears$group, sep = "_")
+
+raincloud_glucose <- ggplot(glucose_allyears, aes(x = year_group, y = glucose, fill = group, color = group)) +
+  geom_half_violin(side = "l", alpha = 0.8, width = 0.6) +
+  geom_point(position = position_jitter(width = 0.1), size = 2, alpha = 0.8) +
+  geom_boxplot(width = 0.1, outlier.shape = NA, alpha = 1, color = "black", position = position_nudge(x = 0.15)) +
+  theme_classic() +
+  labs(
+    title = "Glucose by Year",
+    x = "Year",
+    y = "Glucose"
+  ) +
+  scale_x_discrete(labels = function(x) sub("_.*", "", x)) +  # Show just the year on x-axis
+  theme(
+    text = element_text(size = 14),
+    legend.position = "right"
+  )
+
+raincloud_glucose
+
+```
+
+```{r}
+ggplot(glucose_allyears, aes(x = factor(year), y = glucose, fill = group)) +
+  geom_boxplot(position = position_dodge(width = 0.75)) +
+  scale_fill_manual(values = c("Low Plastic" = "#56b4e9", "High Plastic" = "#009e73")) +
+  theme_classic() +
+  labs(
+    title = "Glucose by Year and Group",
+    x = "Year",
+    y = "Glucose",
+    fill = "Plastic Category"
+  )
+```
+
+```{r}
+glucose_2014_stats <- glucose_2014[glucose_2014$year == 2014, ]
+glucose_2014_stats$log_plastics <- log(glucose_2014_stats$plastic + 1)
+
+# Create empty list to store results
+results_list <- list()
+
+df_sub <- glucose_2014_stats %>%
+  select(log_plastics, mass, glucose)
+
+
+# Extract relevant data
+  df_sub <- glucose_2014_stats[, c(log_plastics, mass, glucose)]
+  names(df_sub) <- c("plastic_mass", "mass", "response")
+  df_sub <- na.omit(df_sub)
+  
+  # ----------------------------------------
+  # BoxCox model with plastic_mass
+  df_sub$plastics <- (df_sub$plastic_mass)
+  aov_base <- lm(response ~ plastics, data = df_sub)
+  
+  boxcox_out <- boxcox(aov_base, lambda = seq(-5, 5, 1/1000), plotit = FALSE)
+  lambda <- boxcox_out$x[which.max(boxcox_out$y)]
+  
+  # Apply transformation
+  if (lambda == 0) {
+    response_trans <- log(df_sub$response)
+  } else {
+    response_trans <- df_sub$response^lambda
+  }
+  
+  aov_base_trans <- lm(response_trans ~ plastics, data = df_sub)
+  print(tab_model(aov_base_trans))
+  print(autoplot(aov_base_trans))
+  
+  # Extract p-value for plastics
+  aov_res <- anova(aov_base_trans)
+  p_val <- aov_res["plastics", "Pr(>F)"]
+  results_list[[response_name]] <- p_val
+  
+  # ----------------------------------------
+  # Linear model: response ~ mass (body weight)
+  lm_mass <- lm(response ~ mass, data = df_sub)
+  df_sub$residuals_mass <- resid(lm_mass)
+  
+  # Plot residuals vs unlogged plastic mass
+  p <- ggplot(df_sub, aes(x = plastics, y = residuals_mass)) +
+    geom_point() +
+    geom_smooth(method = "lm", se = TRUE, color = "blue") +
+    labs(
+      title = paste("Residuals of", response_name, "vs Plastic Mass"),
+      x = "Plastic Mass (g)",
+      y = "Residuals from response ~ Body Mass"
+    ) +
+    theme_classic()
+  
+  print(p)
+
+
+  p <- ggplot(df_sub, aes(x = plastics, y = response)) +
+    geom_point() +
+    geom_smooth(method = "lm", se = TRUE, color = "#0072b2") +
+    labs(
+      title = paste("Raw data from ", response_name, "vs Plastic Mass"),
+      x = "Plastic Mass (g)",
+      y = "Response"
+    ) +
+    theme_classic()
+  
+  print(p)
+  
+  file_name <- paste0("plot_", gsub(" ", "_", response_name), ".pdf")
+
+  # Save as PDF
+  ggsave(
+    filename = file_name,
+    plot = p,
+    device = "pdf",
+    width = 6,
+    height = 5
+  )
+
+# Convert p-values to dataframe
+results_df <- data.frame(
+  Response = names(results_list),
+  P_Value = unlist(results_list)
+)
+
+print(results_df)
+```
+
+```{r}
+glucose_allyears <- data.frame(
+  ID = blood_data$ID,
+  glucose = blood_data$glucose,
+  plastic = blood_data$Plas.mass,
+  mass = blood_data$Mass, 
+  year = blood_data$Year)
+
+glucose_2014 <- glucose_allyears[glucose_allyears$year == "2014", ]
+glucose_2014$log_plastics <- log(glucose_2014$plastic + 1)
+
+df_sub <- glucose_2014 %>%
+  select(log_plastics, mass, glucose)
+
+# Create empty list to store results
+results_list <- list()
+
+# Set the response variable name
+response_name <- "glucose"
+
+# Subset just the needed columns
+df_sub <- glucose_2014_stats %>%
+  select(log_plastics, mass, glucose) %>%
+  rename(
+    plastic_mass = log_plastics,
+    response = glucose
+  ) %>%
+  na.omit()
+
+# ----------------------------------------
+# BoxCox model with plastic_mass
+df_sub$plastics <- df_sub$plastic_mass
+aov_base <- lm(response ~ plastics, data = df_sub)
+
+boxcox_out <- boxcox(aov_base, lambda = seq(-5, 5, 1/1000), plotit = FALSE)
+lambda <- boxcox_out$x[which.max(boxcox_out$y)]
+
+# Apply transformation
+if (lambda == 0) {
+  response_trans <- log(df_sub$response)
+} else {
+  response_trans <- df_sub$response^lambda
+}
+
+aov_base_trans <- lm(response_trans ~ plastics, data = df_sub)
+print(tab_model(aov_base_trans))
+print(autoplot(aov_base_trans))
+
+# Extract p-value for plastics
+aov_res <- anova(aov_base_trans)
+p_val <- aov_res["plastics", "Pr(>F)"]
+results_list[[response_name]] <- p_val
+
+# ----------------------------------------
+# Linear model: response ~ mass (body weight)
+lm_mass <- lm(response ~ mass, data = df_sub)
+df_sub$residuals_mass <- resid(lm_mass)
+
+# Plot residuals vs unlogged plastic mass
+p <- ggplot(df_sub, aes(x = plastics, y = residuals_mass)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") +
+  labs(
+    title = paste("Residuals of", response_name, "vs Plastic Mass"),
+    x = "Plastic Mass (g)",
+    y = "Residuals from response ~ Body Mass"
+  ) +
+  theme_classic()
+
+print(p)
+
+# Raw data plot
+p <- ggplot(df_sub, aes(x = plastics, y = response)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE, color = "#0072b2") +
+  labs(
+    title = paste("Raw data from", response_name, "vs Plastic Mass"),
+    x = "Plastic Mass (g)",
+    y = "Response"
+  ) +
+  theme_classic()
+
+print(p)
+
+file_name <- paste0("plot_", gsub(" ", "_", response_name), ".pdf")
+
+# Save as PDF
+ggsave(
+  filename = file_name,
+  plot = p,
+  device = "pdf",
+  width = 6,
+  height = 5
+)
+
+# Convert p-values to dataframe
+results_df <- data.frame(
+  Response = names(results_list),
+  P_Value = unlist(results_list)
+)
+
+results_df
+
+```
+
+```{r}
+glucose_2025 <- glucose_allyears[glucose_allyears$year == "2025", ]
+
+# Create empty list to store results
+results_list <- list()
+
+# Subset just the needed columns
+df_sub <- glucose_2025 %>%
+  select(plastic, mass, glucose) %>%
+  rename(
+    plastic_mass = plastic,
+    response = glucose
+  ) %>%
+  na.omit()
+
+# ----------------------------------------
+# BoxCox model with plastic_mass
+df_sub$plastics <- df_sub$plastic_mass
+aov_base <- lm(response ~ plastics, data = df_sub)
+
+boxcox_out <- boxcox(aov_base, lambda = seq(-5, 5, 1/1000), plotit = FALSE)
+lambda <- boxcox_out$x[which.max(boxcox_out$y)]
+
+# Apply transformation
+if (lambda == 0) {
+  response_trans <- log(df_sub$response)
+} else {
+  response_trans <- df_sub$response^lambda
+}
+
+aov_base_trans <- lm(response_trans ~ plastics, data = df_sub)
+print(tab_model(aov_base_trans))
+print(autoplot(aov_base_trans))
+
+# Extract p-value for plastics
+aov_res <- anova(aov_base_trans)
+p_val <- aov_res["plastics", "Pr(>F)"]
+results_list[[response_name]] <- p_val
+
+# ----------------------------------------
+# Linear model: response ~ mass (body weight)
+lm_mass <- lm(response ~ mass, data = df_sub)
+df_sub$residuals_mass <- resid(lm_mass)
+
+# Plot residuals vs unlogged plastic mass
+p <- ggplot(df_sub, aes(x = plastics, y = residuals_mass)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") +
+  labs(
+    title = paste("Residuals of", response_name, "vs Plastic Mass"),
+    x = "Plastic Mass (g)",
+    y = "Residuals from response ~ Body Mass"
+  ) +
+  theme_classic()
+
+print(p)
+
+# Raw data plot
+p <- ggplot(df_sub, aes(x = plastics, y = response)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE, color = "#0072b2") +
+  labs(
+    title = paste("Raw data from", response_name, "vs Plastic Mass"),
+    x = "Plastic Mass (g)",
+    y = "Response"
+  ) +
+  theme_classic()
+
+print(p)
+
+file_name <- paste0("plot_", gsub(" ", "_", response_name), ".pdf")
+
+# Save as PDF
+ggsave(
+  filename = file_name,
+  plot = p,
+  device = "pdf",
+  width = 6,
+  height = 5
+)
+
+# Convert p-values to dataframe
+results_df <- data.frame(
+  Response = names(results_list),
+  P_Value = unlist(results_list)
+)
+
+results_df
+```
+
+
+
+
+
+
+
+plastic plots 
+
+```{r}
+plastic_mass_plot <- data.frame(
+  plastic = blood_data$Plas.mass,
+  year = blood_data$Year
+)
+
+plastic_mass_plot <- plastic_mass_plot %>%
+  filter(year %in% c(2014, 2025))
+
+colours <- viridis(2, begin = 0.50, end = 0.75, alpha = 0.5)
+colours <- c("#009e73", "#0072b2")
+plastic_mass_plot$year <- factor(plastic_mass_plot$year, levels = c("2025", "2014"))
+
+ggplot(plastic_mass_plot, aes(year, plastic, fill = year, col = year)) +
+  geom_flat_violin(position = position_nudge(x = 0.1, y = 0), alpha = 0.8, width = 0.75) +
+  geom_point(position = position_jitterdodge(dodge.width = 0.15, jitter.width = 0.15), size = 4, alpha = 0.8) +
+  geom_boxplot(color = "black", width = 0.08, outlier.shape = NA, alpha = 0.5, position = position_nudge(x = -0.2, y = 0)) +
+  coord_flip() +
+  labs(x = "", y = "Relative levels") +
+  scale_y_continuous(trans = "sqrt") +
+  theme_classic() +
+  theme(text = element_text(size = 14)) + 
+  scale_fill_manual(values = colours) +
+  scale_colour_manual(values = colours) +
+  guides(
+    colour = guide_legend(order =2),
+    shape = "none"
+    )
+  
+
+
+
+
+
+
+
+
+
+rain_cloud_plot <- ggplot(plastic_mass_plot, aes(plastic, year)) 
+
+# Adding a flat violin plot with some horizontal position adjustment and transparency
+  geom_flat_violin(position = position_nudge(x = 0.1, y = 0), alpha = 0.8, width = 0.5) +
+
+# Adding points to the plot with jittering and dodging for better visualization, along with some transparency
+  geom_point(position = position_jitterdodge(dodge.width = 0.15, jitter.width = 0.15), size = 2, alpha = 0.6) +
+
+# Adding a box plot with black color, no outliers, some transparency, and horizontal position adjustment
+  geom_boxplot(color = "black", width = 0.1, outlier.shape = NA, alpha = 0.5, position = position_nudge(x = -0.2, y = 0)) +
+
+# Flipping the x and y axes (transposing) to create a horizontal plot
+  coord_flip() +
+
+# Setting the x and y axis labels and adjusting the y-axis scale to a square root transformation
+  labs(x = "", y = "Relative levels") +
+  scale_y_continuous(trans = "sqrt") +
+
+# Applying a classic theme to the plot
+  theme_classic() +
+
+# Removing the legend from the plot
+  theme(legend.position = "none") +
+
+# Adjusting the font size for the text elements in the plot
+  theme(text = element_text(size = 14)) +
+
+# Setting the color palette for the fill aesthetic
+  scale_fill_manual(values = colours) +
+
+# Setting the color palette for the color aesthetic
+  scale_colour_manual(values = colours)+
+# Relabel x axis
+  scale_x_discrete(labels=c("Disease + Drug", "Disease","Drug", "Control"))
+
+# Displaying the plot
+rain_cloud_plot
+
+
+
+
+
+
+ggplot(plastic_mass_plot, aes(year, plastic, fill = year)) +
+  # Flat violin
+  geom_flat_violin(position = position_nudge(x = 0.1, y = 0), alpha = 0.8, width = 0.75, colour = NA) +
+  # Points with outline matching fill
+  geom_point(aes(fill = year, colour = year), 
+             shape = 21, 
+             position = position_jitterdodge(dodge.width = 0.15, jitter.width = 0.15),
+             size = 4, 
+             alpha = 0.8) +
+  # Boxplot
+  geom_boxplot(color = "black", width = 0.08, outlier.shape = NA, alpha = 0.5, position = position_nudge(x = -0.2, y = 0)) +
+  coord_flip() +
+  labs(x = "", y = "Relative levels") +
+  scale_y_continuous(trans = "sqrt") +
+  theme_classic() +
+  theme(text = element_text(size = 14)) + 
+  scale_fill_manual(values = colours) +
+  scale_colour_manual(values = colours) +
+  guides(
+    colour = guide_legend(order = 2),
+    shape = "none"
+  )
+
+
+```
+
+
+```{r}
+blood_chem <- blood_data
+blood_chem$log_plastic_mass <- log(blood_chem$Plas.mass+1)
+years<-c("2014", "2025")
+blood_chem_trim <- blood_chem[blood_chem$Year %in% years,]
+
+# safe z-score function (handles NA and zero SD)
+zw <- function(x) {
+  s <- sd(x, na.rm = TRUE)
+  if (is.na(s) || s == 0) return(ifelse(is.na(x), NA_real_, 0))
+  (x - mean(x, na.rm = TRUE)) / s
+}
+
+
+
+blood_chem_trim$glucose_z <- with(blood_chem_trim, ave(glucose, Year, FUN = zw))
+
+
+lm<-lm(glucose_z ~ Year+log_plastic_mass, data = blood_chem_trim)
+autoplot(lm)
+tab_model(lm)
+
+blood_chem_trim$mass_group <- ifelse(blood_chem_trim$Mass < 450, "< 450", "≥ 450")
+
+# Plot
+ggplot(blood_chem_trim, aes(x = log_plastic_mass, y = glucose_z, colour = factor(Year))) +
+  #geom_text(aes(label = ID), vjust = -0.8, size = 3, colour = "black") +
+  geom_point(size = 3, shape = 16, alpha = 0.8) +
+  geom_smooth(method = "lm", se = TRUE, colour = "black", linewidth = 1, fill = "grey70") +
+  labs(
+    x = "Plastic Mass (log scale)",
+    y = "Glucose Z-score",
+    colour = "Year",
+    title = "Linear Regression: Glucose Z vs Plastic Mass"
+  ) +
+  facet_wrap(~ mass_group) +
+  scale_colour_manual(values = c("2014" = "#0072b2", "2025" = "#009e73")) +
+  theme_classic(base_size = 14) +
+  theme(
+    legend.position = "right",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    clip = "off"
+  )
+
+```
+
+```{r}
+blood_chem_trim$Cal14_Z <- scale(blood_chem_trim$Ca_I)
+blood_chem_trim$Cal25_Z <- scale(blood_chem_trim$Ca_Z)
+
+blood_chem_trim$Calcium_z <- rowMeans(blood_chem_trim[, c("Cal14_Z", "Cal25_Z")], na.rm = TRUE)
+
+ggplot(blood_chem_trim, aes(x = log_plastic_mass, y = Calcium_z, colour = factor(Year))) +
+  geom_point(size = 3, shape = 16, alpha = 0.8) +
+  geom_smooth(method = "lm", se = TRUE, colour = "black", linewidth = 1, fill = "grey70") +
+  geom_text_repel(aes(label = ID), size = 3, colour = "black") + 
+  labs(
+    x = "Plastic Mass (log scale)",
+    y = "Calcium Z-score",
+    colour = "Year",
+    title = "Linear Regression: Calcium Z vs Plastic Mass"
+  ) +
+  facet_wrap(~ mass_group) +
+  scale_colour_manual(values = c("2014" = "#0072b2", "2025" = "#009e73")) +
+  theme_classic(base_size = 14) +
+  theme(
+    legend.position = "right",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    clip = "off"
+  )
+
+
+```
+
+
+
+
+```{r}
+
+uric_acid <- read.csv("250815 2014 uric acid.csv")
+
+
+
+p <- ggplot(uric_acid, aes(x = Plastic, y = Uric)) +
+    geom_point() +
+    geom_smooth(method = "lm", se = TRUE, color = "#0072b2") +
+    labs(
+      title = paste("Raw data from ", "Uric acid", "vs Plastic Mass"),
+      x = "Plastic Mass (g)",
+      y = "Response"
+    ) +
+    theme_classic()
+  
+  print(p)
+
+
+```
+
